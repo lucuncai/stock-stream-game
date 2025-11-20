@@ -33,7 +33,11 @@ const gameState = {
     history: [],
     rewardThreshold: 15000, // Main target
     lastMilestone: 10000, // Track the last passed milestone (every 100)
-    rewardTriggered: false
+    rewardTriggered: false,
+    positionCost: 0,
+    avgShareCost: 0,
+    plAmount: 0,
+    plPercent: 0
 };
 
 // --- Helper: Update Price ---
@@ -60,6 +64,21 @@ async function gameLoop() {
     gameState.totalAssets = gameState.cash + (gameState.shares * gameState.stockPrice);
     gameState.totalAssets = parseFloat(gameState.totalAssets.toFixed(2));
 
+    // Position metrics
+    if (gameState.shares <= 0) {
+        gameState.shares = 0;
+        gameState.positionCost = 0;
+        gameState.avgShareCost = 0;
+        gameState.plAmount = 0;
+        gameState.plPercent = 0;
+    } else {
+        gameState.avgShareCost = parseFloat((gameState.positionCost / gameState.shares).toFixed(2));
+        const currentPositionValue = gameState.shares * gameState.stockPrice;
+        const plAmount = currentPositionValue - gameState.positionCost;
+        gameState.plAmount = parseFloat(plAmount.toFixed(2));
+        gameState.plPercent = gameState.positionCost > 0 ? parseFloat(((plAmount / gameState.positionCost) * 100).toFixed(2)) : 0;
+    }
+
     // History
     gameState.history.push({ time: Date.now(), price: gameState.stockPrice });
     if (gameState.history.length > 50) gameState.history.shift();
@@ -69,8 +88,9 @@ async function gameLoop() {
     if (currentMilestone > gameState.lastMilestone) {
         let nextMilestone = gameState.lastMilestone + 100;
         while(nextMilestone <= currentMilestone) {
+            const milestoneDisplay = nextMilestone.toLocaleString('en-US');
             io.emit('milestone_event', { 
-                message: `🎉 ASSETS SURPASSED $${nextMilestone}!`,
+                message: `🎉 ASSETS SURPASSED $${milestoneDisplay}!`,
                 totalAssets: nextMilestone 
             });
             gameState.lastMilestone = nextMilestone;
@@ -103,6 +123,9 @@ function handleBuy(dollarAmount = 100) {
     if (gameState.cash >= dollarAmount) {
         gameState.cash -= dollarAmount;
         gameState.shares += sharesToBuy;
+        const cost = sharesToBuy * gameState.stockPrice;
+        gameState.positionCost += cost;
+        gameState.positionCost = parseFloat(gameState.positionCost.toFixed(2));
         // Fix float precision issues
         gameState.shares = parseFloat(gameState.shares.toFixed(6));
         return true;
@@ -115,8 +138,16 @@ function handleSell(dollarAmount = 100) {
     const sharesToSell = dollarAmount / gameState.stockPrice;
 
     if (gameState.shares >= sharesToSell) {
+        const avgCostPerShare = gameState.shares > 0 ? gameState.positionCost / gameState.shares : 0;
         gameState.shares -= sharesToSell;
         gameState.cash += dollarAmount;
+        const costReduction = avgCostPerShare * sharesToSell;
+        gameState.positionCost -= costReduction;
+        gameState.positionCost = parseFloat(Math.max(0, gameState.positionCost).toFixed(2));
+        if (gameState.shares <= 0) {
+            gameState.shares = 0;
+            gameState.positionCost = 0;
+        }
         // Fix float precision issues
         gameState.shares = parseFloat(gameState.shares.toFixed(6));
         return true;
