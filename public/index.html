@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <title>Stock Stream Game</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+    <style>
+        body { font-family: 'Arial', sans-serif; background: #1a1a1a; color: white; margin: 0; padding: 20px; display: flex; height: 100vh; overflow: hidden; }
+        #main-panel { flex: 3; display: flex; flex-direction: column; }
+        #side-panel { flex: 1; background: #2a2a2a; margin-left: 20px; padding: 10px; border-radius: 10px; display: flex; flex-direction: column; }
+        
+        .stat-box { background: #333; padding: 15px; border-radius: 8px; margin-bottom: 10px; text-align: center; }
+        .stat-value { font-size: 2em; font-weight: bold; color: #4CAF50; }
+        .stat-label { color: #aaa; font-size: 0.9em; }
+        
+        #chart-container { flex: 1; background: #222; border-radius: 10px; padding: 10px; position: relative; }
+        
+        #events-log { flex: 1; overflow-y: auto; font-size: 0.9em; }
+        .event-item { padding: 5px; border-bottom: 1px solid #444; animation: fadeIn 0.5s; }
+        .buy { color: #4CAF50; }
+        .sell { color: #FF5252; }
+        .gift { color: #FFD700; font-weight: bold; }
+        
+        #reward-overlay, #milestone-overlay { 
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+            background: rgba(0,0,0,0.8); display: none; 
+            justify-content: center; align-items: center; flex-direction: column; z-index: 999;
+            pointer-events: none;
+        }
+        #reward-overlay h1 { font-size: 4em; color: #FFD700; text-shadow: 0 0 20px gold; animation: popIn 0.5s; }
+        
+        #milestone-overlay { background: transparent; }
+        .milestone-msg { 
+            font-size: 3em; color: #00e5ff; text-shadow: 0 0 20px #00e5ff; 
+            animation: slideUpFade 3s forwards; 
+            background: rgba(0,0,0,0.7);
+            padding: 20px 40px;
+            border-radius: 15px;
+            border: 2px solid #00e5ff;
+        }
+
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes popIn { 0% { transform: scale(0); } 80% { transform: scale(1.2); } 100% { transform: scale(1); } }
+        @keyframes slideUpFade { 
+            0% { opacity: 0; transform: translateY(50px) scale(0.8); } 
+            10% { opacity: 1; transform: translateY(0) scale(1.1); }
+            20% { transform: translateY(0) scale(1); }
+            80% { opacity: 1; transform: translateY(0) scale(1); } 
+            100% { opacity: 0; transform: translateY(-50px) scale(0.9); } 
+        }
+    </style>
+</head>
+<body>
+
+<div id="main-panel">
+    <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+        <div class="stat-box" style="flex: 1;">
+            <div class="stat-label" id="stock-name-display">STOCK PRICE</div>
+            <div class="stat-value" id="price-display">100.00</div>
+        </div>
+        <div class="stat-box" style="flex: 1;">
+            <div class="stat-label">CASH AVAILABLE</div>
+            <div class="stat-value" id="cash-display">10000</div>
+        </div>
+        <div class="stat-box" style="flex: 1;">
+            <div class="stat-label">SHARES HELD</div>
+            <div class="stat-value" id="shares-display">0</div>
+        </div>
+    </div>
+    
+    <div id="chart-container">
+        <canvas id="stockChart"></canvas>
+    </div>
+    
+    <div class="stat-box" style="margin-top: 10px;">
+        <div class="stat-label">TOTAL ASSETS (Target: <span id="target-display">15000</span>)</div>
+        <div class="stat-value" id="assets-display" style="color: #2196F3;">10000</div>
+    </div>
+</div>
+
+<div id="side-panel">
+    <h3>Live Activity</h3>
+    <div id="events-log"></div>
+</div>
+
+<div id="reward-overlay">
+    <h1>🎉 BONUS TIME! 🎉</h1>
+    <h2 id="reward-msg">Target Reached!</h2>
+</div>
+
+<div id="milestone-overlay"></div>
+
+<script>
+    const socket = io();
+    
+    // Chart Setup
+    const ctx = document.getElementById('stockChart').getContext('2d');
+    const chart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Stock Price',
+                data: [],
+                borderColor: '#4CAF50',
+                borderWidth: 2,
+                pointRadius: 0,
+                fill: true,
+                backgroundColor: 'rgba(76, 175, 80, 0.1)',
+                tension: 0.1
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                x: { display: false },
+                y: { grid: { color: '#333' } }
+            },
+            animation: false,
+            plugins: { legend: { display: false } }
+        }
+    });
+
+    // State Updates
+    socket.on('state_update', (state) => {
+        document.getElementById('stock-name-display').innerText = state.stockName || 'STOCK PRICE';
+        document.getElementById('price-display').innerText = state.stockPrice.toFixed(2);
+        document.getElementById('cash-display').innerText = Math.floor(state.cash);
+        document.getElementById('shares-display').innerText = state.shares;
+        document.getElementById('assets-display').innerText = state.totalAssets.toFixed(2);
+        document.getElementById('target-display').innerText = state.rewardThreshold;
+        
+        // Update Chart
+        const labels = state.history.map(h => new Date(h.time).toLocaleTimeString());
+        const data = state.history.map(h => h.price);
+        
+        chart.data.labels = labels;
+        chart.data.datasets[0].data = data;
+        
+        // Color update based on trend
+        if(data.length > 1) {
+            const color = data[data.length-1] >= data[data.length-2] ? '#4CAF50' : '#FF5252';
+            chart.data.datasets[0].borderColor = color;
+            document.getElementById('price-display').style.color = color;
+        }
+        
+        chart.update();
+    });
+
+    // Events
+    const log = document.getElementById('events-log');
+    function addLog(html) {
+        const div = document.createElement('div');
+        div.className = 'event-item';
+        div.innerHTML = html;
+        log.prepend(div);
+        if(log.children.length > 20) log.lastChild.remove();
+    }
+
+    socket.on('chat_event', (data) => {
+        addLog(`<span style="color: #ddd;">💬 <b>${data.user}</b>: ${data.text}</span>`);
+    });
+
+    socket.on('trade_event', (data) => {
+        const color = data.action === 'buy' ? 'buy' : 'sell';
+        const icon = data.action === 'buy' ? '📈' : '📉';
+        const amountDisplay = data.amount ? `($${data.amount})` : '';
+        addLog(`<span class="${color}">${icon} <b>${data.user}</b> ${data.action.toUpperCase()} ${amountDisplay} @ ${data.price}</span>`);
+    });
+
+    socket.on('gift_event', (data) => {
+        addLog(`<span class="gift">🎁 <b>${data.user}</b> sent ${data.giftName} (+${data.cashAdded})</span>`);
+    });
+    
+    socket.on('reward_trigger', (data) => {
+        const overlay = document.getElementById('reward-overlay');
+        document.getElementById('reward-msg').innerText = data.message;
+        overlay.style.display = 'flex';
+        overlay.style.pointerEvents = 'auto';
+        
+        // Fire confetti
+        confetti({
+            particleCount: 150,
+            spread: 70,
+            origin: { y: 0.6 },
+            zIndex: 2000
+        });
+
+        setTimeout(() => {
+            overlay.style.display = 'none';
+            overlay.style.pointerEvents = 'none';
+        }, 5000);
+    });
+
+    socket.on('milestone_event', (data) => {
+        const overlay = document.getElementById('milestone-overlay');
+        
+        // Create new milestone message element
+        const msgDiv = document.createElement('div');
+        msgDiv.className = 'milestone-msg';
+        msgDiv.innerText = data.message;
+        
+        // Clear previous and show
+        overlay.innerHTML = ''; 
+        overlay.appendChild(msgDiv);
+        overlay.style.display = 'flex';
+
+        // Fire smaller confetti burst
+        confetti({
+            particleCount: 50,
+            spread: 50,
+            startVelocity: 30,
+            origin: { y: 0.5 },
+            zIndex: 2000,
+            colors: ['#00e5ff', '#ffffff']
+        });
+
+        // Auto hide matches animation duration (3s)
+        setTimeout(() => {
+            if(overlay.firstChild === msgDiv) {
+                overlay.style.display = 'none';
+            }
+        }, 3000);
+    });
+</script>
+</body>
+</html>

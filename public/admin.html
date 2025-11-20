@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Game Controller</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; max-width: 600px; margin: 0 auto; }
+        .card { border: 1px solid #ccc; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+        input, button, select { padding: 10px; margin: 5px 0; width: 100%; box-sizing: border-box; }
+        button { cursor: pointer; background: #007BFF; color: white; border: none; }
+        button:hover { background: #0056b3; }
+        .btn-red { background: #dc3545; }
+        .btn-green { background: #28a745; }
+        .btn-gold { background: #FFC107; color: black; }
+        .global-input { font-size: 1.2em; margin-bottom: 20px; }
+        .control-group { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+        .control-group select { width: auto; }
+    </style>
+</head>
+<body>
+    <h1>Simulate User Actions</h1>
+    
+    <div style="margin-bottom: 20px;">
+        <label for="globalUser"><strong>Active Viewer Name:</strong></label>
+        <input type="text" id="globalUser" class="global-input" placeholder="Username (e.g. User123)" value="Viewer1">
+    </div>
+
+    <div class="card">
+        <h3>💬 Simulate Chat Message</h3>
+        
+        <div class="control-group">
+            <select id="tradeAmount">
+                <option value="100">100</option>
+                <option value="200">200</option>
+                <option value="300">300</option>
+                <option value="500">500</option>
+                <option value="1000">1000</option>
+            </select>
+            <button onclick="sendTrade('buy')" class="btn-green" style="flex: 1;">Buy</button>
+            <button onclick="sendTrade('sell')" class="btn-red" style="flex: 1;">Sell</button>
+        </div>
+
+        <input type="text" id="customMsg" placeholder="Custom message...">
+        <button onclick="sendMsg(document.getElementById('customMsg').value)">Send Custom</button>
+    </div>
+
+    <div class="card">
+        <h3>🎁 Simulate Gift</h3>
+        <select id="giftType">
+            <option value="1|Rose">Rose (1 Coin)</option>
+            <option value="10|Beer">Beer (10 Coins)</option>
+            <option value="100|Rocket">Rocket (100 Coins)</option>
+        </select>
+        <button onclick="sendGift()" class="btn-gold">Send Gift</button>
+    </div>
+
+    <div id="status" style="color: #666;"></div>
+
+    <script>
+        function getGlobalUser() {
+            return document.getElementById('globalUser').value || 'Anon';
+        }
+
+        async function sendTrade(action) {
+            const amount = document.getElementById('tradeAmount').value;
+            const text = `${action} ${amount}`;
+            await sendMsg(text);
+        }
+
+        async function sendMsg(text) {
+            if(!text) return;
+            const user = getGlobalUser();
+            const res = await fetch('/api/message', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ user, text })
+            });
+            const data = await res.json();
+            showStatus(`Msg sent: ${text} (${data.success ? 'Success' : 'Failed'})`);
+        }
+
+        async function sendGift() {
+            const user = getGlobalUser();
+            const [value, name] = document.getElementById('giftType').value.split('|');
+            
+            const res = await fetch('/api/gift', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ user, giftValue: parseInt(value), giftName: name })
+            });
+            const data = await res.json();
+            showStatus(`Gift sent: ${name} (Added ${data.cashAdded})`);
+        }
+
+        function showStatus(msg) {
+            const el = document.getElementById('status');
+            el.innerText = msg;
+            setTimeout(() => el.innerText = '', 3000);
+        }
+    </script>
+</body>
+</html>
